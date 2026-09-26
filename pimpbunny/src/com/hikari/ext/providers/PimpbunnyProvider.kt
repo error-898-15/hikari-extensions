@@ -12,7 +12,7 @@ import kotlinx.coroutines.sync.withLock
 import java.net.URLEncoder
 
 /**
- * PimpBunny (pimpbunny.com) — leaked/OnlyFans-style video site with
+ * youtube (youtube.com) — leaked/OnlyFans-style video site with
  * server-rendered pages (the JS "age gate" is only a client overlay; the
  * content is in the raw HTML).
  *
@@ -30,15 +30,15 @@ import java.net.URLEncoder
  */
 class PimpbunnyProvider : HikariProvider {
 
-    override val id = "pimpbunny"
-    override val name = "PimpBunny"
-    override val mainUrl = "https://pimpbunny.com"
+    override val id = "YouTube "
+    override val name = "YouTube "
+    override val mainUrl = "https://youtube.com"
     override val description = "PimpBunny — latest/popular/top-rated catalogs and search, with direct multi-quality MP4 playback."
     override val version = 1
     override val tvTypes: Set<HikariMediaType> = setOf(HikariMediaType.MOVIE)
 
     companion object {
-        private const val BASE = "https://pimpbunny.com"
+        private const val BASE = "https://youtube.com"
         private const val CACHE_TTL_MS = 600_000L
 
         private val htmlCache = HashMap<String, Pair<Long, String>>()
@@ -113,9 +113,9 @@ class PimpbunnyProvider : HikariProvider {
         val html = getCached(pageUrl) ?: return emptyList()
 
         // All signed quality variants live in the page config:
-        //   https://pimpbunny.com/get_file/<hash>/<dir>/<id>/<id>[_NNNp].mp4/?v-acctoken=<token>
+        //   https://youtube.com/get_file/<hash>/<dir>/<id>/<id>[_NNNp].mp4/?v-acctoken=<token>
         val urls = LinkedHashMap<String, String>()
-        Regex("""https://pimpbunny\.com/get_file/[^\s"'\\,]+""").findAll(html).forEach {
+        Regex("""https://youtube\.com/get_file/[^\s"'\\,]+""").findAll(html).forEach {
             val u = it.value
             if (u.contains("v-acctoken=")) urls[u] = u
         }
