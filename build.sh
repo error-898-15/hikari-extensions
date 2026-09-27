@@ -1,60 +1,46 @@
 #!/usr/bin/env bash
-# Builds every extension in the repo (<name>/manifest.json) → <name>.hiki,
-# then regenerates repo.json listing them all.
-# Needs: java 17+, jar (JDK), curl, unzip. Downloads kotlinc + deps on first run.
 set -euo pipefail
-cd "$(dirname "$0")"
 
-KOTLINC_DIR="${KOTLINC_DIR:-./kotlinc}"
-DEPS="deps"
-mkdir -p "$DEPS"
+KOTLINC_DIR="./kotlinc"
+DEPS_DIR="./deps"
+NATIVE_CS3_DIR="./native-cs3"
 
-# Bridge-sourced .cs3 plugins are ALSO published as standalone native CloudStream
-# extensions. The desktop app cannot run the Hikari bridge jar (loads .cs3 fine
-# natively instead), so every bundled .cs3 becomes its own installable .cs3 asset
-# that BOTH the desktop and the Android app load through the native CloudStream path.
-NATIVE_CS3_DIR="native-cs3"
-rm -rf "$NATIVE_CS3_DIR"; mkdir -p "$NATIVE_CS3_DIR"
+mkdir -p "$DEPS_DIR" "$NATIVE_CS3_DIR" build
 
 fetch() {
-  local url="$1" file="$2"
-  [ -f "$DEPS/$file" ] || curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "$DEPS/$file" "$url"
+  local out="$DEPS_DIR/$1" url="$2"
+  [ -f "$out" ] || curl -fsSL -o "$out" "$url"
 }
 
-fetch https://repo1.maven.org/maven2/com/google/android/android/4.1.1.4/android-4.1.1.4.jar android-4.1.1.4.jar
-fetch https://repo1.maven.org/maven2/org/json/json/20231013/json-20231013.jar json-20231013.jar
-fetch https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.9.0/kotlinx-coroutines-core-jvm-1.9.0.jar kotlinx-coroutines-core-jvm-1.9.0.jar
-fetch https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/4.12.0/okhttp-4.12.0.jar okhttp-4.12.0.jar
-fetch https://repo1.maven.org/maven2/com/squareup/okio/okio-jvm/3.6.0/okio-jvm-3.6.0.jar okio-jvm-3.6.0.jar
-fetch https://dl.google.com/dl/android/maven2/com/android/tools/r8/8.3.37/r8-8.3.37.jar r8-8.3.37.jar
-fetch https://raw.githubusercontent.com/codegeasse1/hikari/main/app/libs/cloudstream3.jar cloudstream3.jar
-fetch https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.7.1/kotlinx-serialization-core-jvm-1.7.1.jar kotlinx-serialization-core-jvm-1.7.1.jar
-fetch https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.7.1/kotlinx-serialization-json-jvm-1.7.1.jar kotlinx-serialization-json-jvm-1.7.1.jar
+echo "fetching compile deps..."
+fetch "json-20231013.jar" "https://repo1.maven.org/maven2/org/json/json/20231013/json-20231013.jar"
+fetch "kotlinx-coroutines-core-jvm-1.9.0.jar" "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/1.9.0/kotlinx-coroutines-core-jvm-1.9.0.jar"
+fetch "okhttp-4.12.0.jar" "https://repo1.maven.org/maven2/com/squareup/okhttp3/okhttp/4.12.0/okhttp-4.12.0.jar"
+fetch "okio-jvm-3.6.0.jar" "https://repo1.maven.org/maven2/com/squareup/okio/okio-jvm/3.6.0/okio-jvm-3.6.0.jar"
+fetch "kotlinx-serialization-core-jvm-1.7.1.jar" "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-core-jvm/1.7.1/kotlinx-serialization-core-jvm-1.7.1.jar"
+fetch "kotlinx-serialization-json-jvm-1.7.1.jar" "https://repo1.maven.org/maven2/org/jetbrains/kotlinx/kotlinx-serialization-json-jvm/1.7.1/kotlinx-serialization-json-jvm-1.7.1.jar"
+fetch "android-4.1.1.4.jar" "https://repo1.maven.org/maven2/com/google/android/android/4.1.1.4/android-4.1.1.4.jar"
+fetch "cloudstream3.jar" "https://raw.githubusercontent.com/codegeasse1/hikari-extensions/main/deps/cloudstream3.jar"
+fetch "r8-8.3.37.jar" "https://repo1.maven.org/maven2/com/android/tools/r8/8.3.37/r8-8.3.37.jar"
+
+CP="$DEPS_DIR/json-20231013.jar:$DEPS_DIR/kotlinx-coroutines-core-jvm-1.9.0.jar:$DEPS_DIR/okhttp-4.12.0.jar:$DEPS_DIR/okio-jvm-3.6.0.jar:$DEPS_DIR/kotlinx-serialization-core-jvm-1.7.1.jar:$DEPS_DIR/kotlinx-serialization-json-jvm-1.7.1.jar"
+EXTRA_CP="$DEPS_DIR/cloudstream3.jar:$DEPS_DIR/android-4.1.1.4.jar"
 
 if [ ! -x "$KOTLINC_DIR/bin/kotlinc" ]; then
+  echo "fetching kotlinc 2.4.10..."
   curl -fsSL -o kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.4.10/kotlin-compiler-2.4.10.zip
   unzip -q kotlinc.zip
+  chmod +x "$KOTLINC_DIR/bin/"* || true
 fi
-
-CP="deps/json-20231013.jar:deps/kotlinx-coroutines-core-jvm-1.9.0.jar:deps/okhttp-4.12.0.jar:deps/okio-jvm-3.6.0.jar:deps/kotlinx-serialization-core-jvm-1.7.1.jar:deps/kotlinx-serialization-json-jvm-1.7.1.jar"
-# CloudStream runtime classes (bridge extensions) + android.jar (context/app
-# classes). The app ships both, so they stay EXTERNAL references — never dexed in.
-EXTRA_CP="deps/cloudstream3.jar:deps/android-4.1.1.4.jar"
 
 rm -rf build
 mkdir -p build/sdk-out build/ext-out build/dex-out build/pkg
 
-# 1) compile the SDK (interface + net helpers) against stubs → sdk.jar
-#    -jvm-default=disable: the APP's com.hikari.ext.HikariProvider was compiled
-#    in legacy mode (ships HikariProvider$DefaultImpls, no HikariProvider$-CC).
-#    kotlinc 2.2+ defaults to 'enable' which emits $-CC references, crashing
-#    installs with NoClassDefFoundError — so pin the app's mode here and when
-#    compiling every extension below.
-"$KOTLINC_DIR/bin/kotlinc" -jvm-default=disable -cp "$CP:deps/android-4.1.1.4.jar" -d build/sdk-out \
+echo "compiling sdk..."
+"$KOTLINC_DIR/bin/kotlinc" -jvm-default=disable -cp "$CP:$DEPS_DIR/android-4.1.1.4.jar" -d build/sdk-out \
   sdk/HikariProvider.kt sdk/HikariNet.kt stubs/HttpStub.kt stubs/WebViewResolverStub.kt stubs/HikariAppStub.kt
 jar cf build/sdk.jar -C build/sdk-out .
 
-# 2..4) build every extension folder that has a manifest.json
 BUILT=""
 for dir in */; do
   [ -f "$dir/manifest.json" ] || continue
@@ -63,36 +49,28 @@ for dir in */; do
   rm -rf build/ext-out build/dex-out build/pkg
   mkdir -p build/ext-out build/dex-out build/pkg
 
-  # compile against sdk.jar (coroutines on classpath so suspend helpers +
-  # kotlinx.coroutines.sync.Mutex resolve; at runtime the app's classloader
-  # provides kotlinx-coroutines). -jvm-default=disable matches the app's
-  # HikariProvider (see the SDK compile comment above).
   "$KOTLINC_DIR/bin/kotlinc" -jvm-default=disable -cp "build/sdk.jar:$EXTRA_CP:$CP" -d build/ext-out \
     "$dir"src/com/hikari/ext/providers/*.kt
   jar cf "build/$name.jar" -C build/ext-out .
+  cp "build/$name.jar" "$name.jar"
 
-  # dex the extension (SDK + CloudStream + android classes stay external refs)
-  cp_args=(--classpath build/sdk.jar)
-  IFS=':' read -ra _cps <<< "$EXTRA_CP:$CP"
-  for c in "${_cps[@]}"; do cp_args+=(--classpath "$c"); done
-  java -cp deps/r8-8.3.37.jar com.android.tools.r8.D8 --release \
-    --lib deps/android-4.1.1.4.jar \
-    "${cp_args[@]}" \
+  java -cp "$DEPS_DIR/r8-8.3.37.jar" com.android.tools.r8.D8 --release \
+    --lib "$DEPS_DIR/android-4.1.1.4.jar" \
+    --classpath build/sdk.jar \
+    --classpath "$DEPS_DIR/cloudstream3.jar" \
+    --classpath "$DEPS_DIR/android-4.1.1.4.jar" \
+    --classpath "$DEPS_DIR/json-20231013.jar" \
+    --classpath "$DEPS_DIR/kotlinx-coroutines-core-jvm-1.9.0.jar" \
+    --classpath "$DEPS_DIR/okhttp-4.12.0.jar" \
+    --classpath "$DEPS_DIR/okio-jvm-3.6.0.jar" \
+    --classpath "$DEPS_DIR/kotlinx-serialization-core-jvm-1.7.1.jar" \
+    --classpath "$DEPS_DIR/kotlinx-serialization-json-jvm-1.7.1.jar" \
     --output build/dex-out "build/$name.jar"
 
-  # package .hiki = classes.dex + manifest.json + any bundled resources
-  cp build/dex-out/classes.dex build/pkg/
-  cp "$name/manifest.json" build/pkg/
-  if [ -d "$name/bundle" ]; then
-    cp -r "$name/bundle/." build/pkg/
-  fi
+  cp build/dex-out/classes.dex build/pkg/classes.dex
+  cp "$dir/manifest.json" build/pkg/manifest.json
+  [ -f "$dir/icon.png" ] && cp "$dir/icon.png" build/pkg/icon.png
 
-  # Bridge extensions (cncverse, phisher) fetch their .cs3 files from the
-  # upstream repos' builds branches at build time — they're third-party
-  # artifacts that change often, and pinning them in git would bloat the repo.
-  # bridge-cs3.conf names the source repo + packaged subdir; bridge-sources.txt
-  # lists "<upstream path>\t<packaged filename>" lines. A failed fetch aborts
-  # the build (a missing .cs3 means broken providers).
   if [ -f "$name/bridge-cs3.conf" ] && [ -f "$name/bridge-sources.txt" ]; then
     urlencode() {
       local s="$1" enc="" c h
@@ -106,129 +84,67 @@ for dir in */; do
       done
       echo "$enc"
     }
+
     . "$name/bridge-cs3.conf"
     mkdir -p "build/pkg/cs3/$bridge_subdir"
     while IFS=$'\t' read -r upstream packaged; do
       [ -z "$upstream" ] && continue
       packaged="${packaged:-$upstream}"
-      curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "build/pkg/cs3/$bridge_subdir/$packaged" \
-        "https://raw.githubusercontent.com/$bridge_repo/builds/$(urlencode "$upstream")"
-      cp "build/pkg/cs3/$bridge_subdir/$packaged" "$NATIVE_CS3_DIR/${name}-${packaged}"
+      if curl -fsSL --retry 2 --retry-delay 1 -o "build/pkg/cs3/$bridge_subdir/$packaged" \
+        "https://raw.githubusercontent.com/$bridge_repo/builds/$(urlencode "$upstream")"; then
+        cp "build/pkg/cs3/$bridge_subdir/$packaged" "$NATIVE_CS3_DIR/${name}-${packaged}"
+      else
+        echo "Warning: skipped $upstream (not found upstream)"
+        rm -f "build/pkg/cs3/$bridge_subdir/$packaged"
+      fi
     done < "$name/bridge-sources.txt"
   fi
 
   jar cf "$name.hiki" -C build/pkg .
-
-  # desktop .jar = compiled classes + manifest.json (+ bundle + cs3): the same
-  # extension, packaged for the JVM desktop app (it cannot run dex).
-  rm -rf build/desktop-out
-  mkdir -p build/desktop-out
-  cp -r build/ext-out/. build/desktop-out/
-  cp "$name/manifest.json" build/desktop-out/
-  if [ -d "$name/bundle" ]; then
-    cp -r "$name/bundle/." build/desktop-out/
-  fi
-  if [ -d build/pkg/cs3 ]; then
-    cp -r build/pkg/cs3 build/desktop-out/
-  fi
-  jar cf "$name.jar" -C build/desktop-out .
-  echo "built $name.jar"
-
-  BUILT="$BUILT $name"
   echo "built $name.hiki"
+  BUILT="$BUILT $name"
 done
 
-if [ -z "$BUILT" ]; then
-  echo "no extensions found" >&2
-  exit 1
-fi
+python3 - <<PY
+import json, glob, hashlib, os
 
-# 5) regenerate repo.json from the built .hiki files + their manifests
-generate_repo_json() {
-  echo "{"
-  echo "  \"name\": \"Hikari Extensions\","
-  echo "  \"description\": \"Official .hiki extensions for Hikari.\","
-  echo "  \"plugins\": ["
-  first=1
-  for name in $BUILT; do
-    [ $first -eq 0 ] && echo ","
-    first=0
-    local ver
-    ver=$(sed -n 's/.*"version"[^0-9]*\([0-9][0-9]*\).*/\1/p' "$name/manifest.json" | head -1)
-    ver="${ver:-1}"
-    local tvtypes
-    tvtypes=$(sed -n 's/.*"tvTypes"[^[]*\[\([^]]*\)\].*/\1/p' "$name/manifest.json" | head -1)
-    [ -n "$tvtypes" ] || tvtypes='"movie"'
-    printf '    {\n'
-    printf '      "name": "%s",\n' "$(sed -n 's/.*"name"[^"]*"\([^"]*\)".*/\1/p' "$name/manifest.json" | head -1)"
-    printf '      "description": "%s",\n' "Auto-built Hikari extension from this repo."
-    printf '      "url": "https://github.com/codegeasse1/hikari-extensions/releases/download/continuous/%s.hiki",\n' "$name"
-    printf '      "version": %s,\n' "$ver"
-    printf '      "tvTypes": [%s]\n' "$tvtypes"
-    printf '    }'
-  done
-  for nf in "$NATIVE_CS3_DIR"/*.cs3; do
-    [ -f "$nf" ] || continue
-    [ $first -eq 0 ] && echo ","
-    first=0
-    _b=$(basename "$nf")
-    _p="${_b%.cs3}"
-    printf '    {\n'
-    printf '      "name": "%s",\n' "$_p"
-    printf '      "description": "%s",\n' "Native CloudStream .cs3 extension (auto-built from this repo)."
-    printf '      "url": "https://github.com/codegeasse1/hikari-extensions/releases/download/continuous/%s",\n' "$_b"
-    printf '      "version": 1,\n'
-    printf '      "tvTypes": ["movie"]\n'
-    printf '    }'
-  done
-  echo ""
-  echo "  ]"
-  echo "}"
-}
-generate_repo_json > repo.json
-echo "repo.json updated with:$BUILT"
+built = "${BUILT}".strip().split()
+plugins = []
 
-# desktop variant: same plugins, but .jar URLs (the JVM desktop app loads jars)
-generate_repo_desktop_json() {
-  echo "{"
-  echo "  \"name\": \"Hikari Extensions (desktop)\","
-  echo "  \"description\": \"Official .jar extensions for Hikari Desktop.\","
-  echo "  \"plugins\": ["
-  first=1
-  for name in $BUILT; do
-    [ $first -eq 0 ] && echo ","
-    first=0
-    local ver
-    ver=$(sed -n 's/.*"version"[^0-9]*\([0-9][0-9]*\).*/\1/p' "$name/manifest.json" | head -1)
-    ver="${ver:-1}"
-    local tvtypes
-    tvtypes=$(sed -n 's/.*"tvTypes"[^[]*\[\([^]]*\)\].*/\1/p' "$name/manifest.json" | head -1)
-    [ -n "$tvtypes" ] || tvtypes='"movie"'
-    printf '    {\n'
-    printf '      "name": "%s",\n' "$(sed -n 's/.*"name"[^"]*"\([^"]*\)".*/\1/p' "$name/manifest.json" | head -1)"
-    printf '      "description": "%s",\n' "Auto-built Hikari desktop extension from this repo."
-    printf '      "url": "https://github.com/codegeasse1/hikari-extensions/releases/download/continuous/%s.jar",\n' "$name"
-    printf '      "version": %s,\n' "$ver"
-    printf '      "tvTypes": [%s]\n' "$tvtypes"
-    printf '    }'
-  done
-  for nf in "$NATIVE_CS3_DIR"/*.cs3; do
-    [ -f "$nf" ] || continue
-    [ $first -eq 0 ] && echo ","
-    first=0
-    _b=$(basename "$nf")
-    _p="${_b%.cs3}"
-    printf '    {\n'
-    printf '      "name": "%s",\n' "$_p"
-    printf '      "description": "%s",\n' "Native CloudStream .cs3 extension (auto-built from this repo)."
-    printf '      "url": "https://github.com/codegeasse1/hikari-extensions/releases/download/continuous/%s",\n' "$_b"
-    printf '      "version": 1,\n'
-    printf '      "tvTypes": ["movie"]\n'
-    printf '    }'
-  done
-  echo ""
-  echo "  ]"
-  echo "}"
+for name in built:
+    hiki_path = f"{name}.hiki"
+    if not os.path.exists(hiki_path):
+        continue
+    with open(f"{name}/manifest.json") as f:
+        m = json.load(f)
+    with open(hiki_path, "rb") as f:
+        h = hashlib.sha256(f.read()).hexdigest()
+
+    plugins.append({
+        "id": m.get("id", name),
+        "name": m.get("name", name),
+        "version": m.get("version", 1),
+        "description": m.get("description", ""),
+        "authors": m.get("authors", []),
+        "iconUrl": m.get("iconUrl"),
+        "file": f"{name}.hiki",
+        "hash": h,
+        "type": m.get("type", "provider"),
+        "language": m.get("language", "multi")
+    })
+
+repo = {
+    "name": "Hikari Extensions Repository",
+    "description": "Extensions repository for Hikari",
+    "manifestVersion": 1,
+    "plugins": plugins
 }
-generate_repo_desktop_json > repo-desktop.json
-echo "repo-desktop.json updated with:$BUILT"
+
+with open("repo.json", "w") as f:
+    json.dump(repo, f, indent=2)
+
+with open("repo-desktop.json", "w") as f:
+    json.dump(repo, f, indent=2)
+
+print(f"Generated repo.json with {len(plugins)} extensions.")
+PY
