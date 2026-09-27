@@ -1,6 +1,0 @@
-{
-  "name": "youtube",
-  "version": 2,
-  "mainClass": "com.hikari.ext.providers.youtubeProvider",
-  "tvTypes": ["movie"]
-}
